@@ -160,7 +160,7 @@ return `<div style="color:${c.color}">${ico('c-' + c.key)}<span class="bar"><i s
 }).join('');
 $('#exLink').value = exportLink();
 const co = $('#cOwn'); if (co) co.textContent = owned.size;
-$('#hLoad').hidden = !!own || !WIN || !!qlHandle;
+$('#hLoad').hidden = !!own || !WIN;
 plan?.refresh();
 }
 function refresh(id) { paint(id); counts(); if (id === presaId) presaLabel(); }
@@ -494,8 +494,7 @@ owned.clear(); for (const k in level) delete level[k]; save(); refreshAll(); app
 /* ---------- Questlog: %APPDATA%\Questlog\aion-2\characters.json, se lee en el navegador ---------- */
 const QL_PATH = '%APPDATA%\\Questlog\\aion-2\\characters.json';
 const WIN = /win/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
-const HAS_PICKER = 'showOpenFilePicker' in window;
-let qlHandle = null;
+let qlAuto = false;
 function parseQL(text) {
 let j; try { j = JSON.parse(text); } catch { return { err: 'wrong' }; }
 if (!j || typeof j.characters !== 'object' || Array.isArray(j.characters) || !j.characters) return { err: 'wrong' };
@@ -519,11 +518,10 @@ empty: 'Ese archivo no tiene pets todavía. Abrí la app de Questlog mientras ju
 read: 'No pude leer el archivo. Probá de nuevo.',
 };
 const qlErr = k => modal('No es ese archivo', `<p class="imp-err">${QL_ERR[k]}</p>`, [['', 'Entendido', 'gold']]);
-async function qlFile(file, handle, silent) {
+async function qlFile(file, silent) {
 let text; try { text = await file.text(); } catch { return qlErr('read'); }
 const r = parseQL(text);
 if (r.err) return qlErr(r.err);
-if (handle) { qlHandle = handle; idb('readwrite', s => s.put(handle, 'questlog')).catch(() => {}); }
 const pref = ls.get('pets-questlog-char', null);
 const auto = silent && pref && r.groups.find(g => g.keys.includes(pref));
 if (auto) { applyImport(ours(auto.list), 'replace'); synced(); return; }
@@ -542,71 +540,35 @@ applyImport(ours(g.list), mode);
 synced();
 }
 function synced() { ls.set('pets-questlog-sync', Date.now()); qlUI(); counts(); }
-async function qlPick() {
+function qlPick(auto) {
+qlAuto = auto === true && !!ls.get('pets-questlog-char', null);
 copy(QL_PATH);
-if (!HAS_PICKER) { toast(`Ruta copiada: <b>${QL_PATH}</b>`, 8000); return $('#qlFile').click(); }
-toast('Pegá (Ctrl+V) en "Nombre de archivo" y Enter: Windows entiende <b>%APPDATA%</b>', 15000);
-const opts = { id: 'questlog', types: [{ description: 'Questlog characters.json', accept: { 'application/json': ['.json'] } }], excludeAcceptAllOption: false };
-let h;
-try { [h] = await showOpenFilePicker(qlHandle ? { ...opts, startIn: qlHandle } : opts); }
-catch (e) {
-if (e.name === 'AbortError') return hideToast();
-try { [h] = await showOpenFilePicker(opts); } catch { return hideToast(); }
-}
-hideToast();
-qlFile(await h.getFile(), h);
-}
-async function qlSync() {
-const h = qlHandle; if (!h) return qlPick();
-const btns = [$('#hSync'), $('#qlSync')]; btns.forEach(b => b.classList.add('busy'));
-try {
-let st = await h.queryPermission({ mode: 'read' });
-if (st !== 'granted') st = await h.requestPermission({ mode: 'read' });
-if (st !== 'granted') return toast('Sin permiso para leer el archivo.');
-await qlFile(await h.getFile(), h, true);
-} catch { toast('No pude leer el archivo guardado. Cargalo de nuevo.'); }
-finally { btns.forEach(b => b.classList.remove('busy')); }
+toast(WIN ? 'Pegá (Ctrl+V) en <b>Nombre</b> del cuadro que se abre y Enter: Windows entiende <b>%APPDATA%</b>' : `Ruta copiada: <b>${QL_PATH}</b>`, 15000);
+$('#qlFile').click();
 }
 function qlUI() {
-const t = ls.get('pets-questlog-sync', 0), has = !!qlHandle;
+const t = ls.get('pets-questlog-sync', 0);
 const ago = t ? new Intl.RelativeTimeFormat('es-AR', { numeric: 'auto', style: 'short' }) : null;
 const rel = () => { const s = (t - Date.now()) / 1000, a = Math.abs(s); return a < 60 ? 'recién' : a < 3600 ? ago.format(Math.round(s / 60), 'minute') : a < 86400 ? ago.format(Math.round(s / 3600), 'hour') : ago.format(Math.round(s / 86400), 'day'); };
-$('#qlSync').hidden = $('#hSync').hidden = !has;
-$('#qlMeta').hidden = !has && !t;
-$('#qlForget').hidden = !has;
-$('#qlWhen').textContent = t ? 'última sync: ' + rel() : 'archivo guardado';
-$('#hSync span').textContent = t ? 'Sincronizar · ' + rel() : 'Sincronizar con Questlog';
-$('#qlLoad').classList.toggle('gold', WIN && !has);
-}
-function idb(mode, fn) {
-return new Promise((res, rej) => {
-const r = indexedDB.open('aion2-pets', 1);
-r.onupgradeneeded = () => r.result.createObjectStore('handles');
-r.onerror = () => rej(r.error);
-r.onsuccess = () => {
-const db = r.result;
-try {
-const tx = db.transaction('handles', mode), q = fn(tx.objectStore('handles'));
-tx.oncomplete = () => { db.close(); res(q?.result); }; tx.onerror = () => { db.close(); rej(tx.error); };
-} catch (e) { db.close(); rej(e); }
-};
-});
+$('#qlSync').hidden = $('#hSync').hidden = !t;
+$('#qlMeta').hidden = !t;
+if (t) $('#qlWhen').textContent = 'última importación: ' + rel();
+$('#hSync span').textContent = t ? 'Actualizar · ' + rel() : 'Actualizar desde Questlog';
+$('#qlLoad').classList.toggle('gold', WIN && !t);
 }
 $('#qlLoad').addEventListener('click', qlPick);
-$('#qlSync').addEventListener('click', qlSync);
-$('#hSync').addEventListener('click', qlSync);
-$('#qlCopy').addEventListener('click', () => copy(QL_PATH, 'Ruta copiada. Pegala en la barra del explorador de Windows.'));
-$('#qlForget').addEventListener('click', () => { qlHandle = null; idb('readwrite', s => s.delete('questlog')).catch(() => {}); ls.set('pets-questlog-sync', null); qlUI(); counts(); toast('Listo, me olvidé del archivo.'); });
-$('#qlFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) qlFile(f); });
+$('#qlSync').addEventListener('click', () => qlPick(true));
+$('#hSync').addEventListener('click', () => qlPick(true));
+$('#qlCopy').addEventListener('click', () => copy(QL_PATH, 'Ruta copiada. Pegala en <b>Nombre</b> del cuadro de Cargar, no en el explorador (ahí Windows abre el archivo).'));
+$('#qlFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; hideToast(); if (f) qlFile(f, qlAuto); });
 {
 const z = $('#qlDrop'), card = $('#qlCard');
 card.addEventListener('dragover', e => { e.preventDefault(); z.classList.add('over'); });
 card.addEventListener('dragleave', e => { if (!card.contains(e.relatedTarget)) z.classList.remove('over'); });
 card.addEventListener('drop', e => {
 e.preventDefault(); z.classList.remove('over');
-const it = e.dataTransfer.items?.[0], f = e.dataTransfer.files[0];
-const hp = it?.getAsFileSystemHandle ? it.getAsFileSystemHandle().catch(() => null) : Promise.resolve(null);
-if (f) hp.then(h => qlFile(f, h?.kind === 'file' ? h : null));
+const f = e.dataTransfer.files[0];
+if (f) qlFile(f);
 });
 }
 if (!WIN) {
@@ -684,7 +646,6 @@ refreshAll();
 apply();
 { const ip = BY.get(presaImg.dataset.id); showPresa(ip && !dead(ip) ? ip : pickPresa(), false); }
 fxUI(); qlUI();
-if (HAS_PICKER) idb('readonly', s => s.get('questlog')).then(h => { if (h) { qlHandle = h; qlUI(); counts(); } }).catch(() => {});
 {
 const m = location.hash.match(/^#pet-(\d+)$/);
 if (m && BY.has(m[1])) openPet(m[1], { push: false, vt: false });
