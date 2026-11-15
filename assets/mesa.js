@@ -2,6 +2,8 @@ const INKS = ['#9E2A1E', '#1E4F8F', '#2F6B33', '#6E3A8E', '#8C5A12', '#1F6E6A'];
 const BAND = ['#A6D9A0', '#EBC57A', '#F0878D'];
 const TILT = 40, KY = 1 / Math.cos(TILT * Math.PI / 180);
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const cssP = new Promise(r => document.head.append(Object.assign(document.createElement('link'),
+{ rel: 'stylesheet', href: new URL('./mesa.css', import.meta.url).href, onload: r, onerror: r })));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const ico = id => `<svg aria-hidden="true"><use href="#${id}"/></svg>`;
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -18,6 +20,7 @@ el.className = 'mesa'; el.tabIndex = 0; el.setAttribute('role', 'group');
 this.label(label);
 el.innerHTML = `<div class="mesa-tilt"><div class="mesa-plane"><img alt="" width="1024" height="1024" decoding="async" src="assets/maps/${regionId}-1024.webp"><svg viewBox="0 0 1000 1000" aria-hidden="true"></svg></div></div>` +
 `<div class="mesa-modo" role="group" aria-label="Vista del mapa"><button type="button" data-m="mesa">${ico('i-mesa')}Mesa</button><button type="button" data-m="plano">${ico('i-plano')}Plano</button></div>` +
+'<p class="mesa-hint" aria-hidden="true">Usá dos dedos para mover el mapa</p>' +
 `<div class="mesa-ctl"><button type="button" data-z="1.5" aria-label="Acercar">${ico('i-plus')}</button><button type="button" data-z="0.6667" aria-label="Alejar">${ico('i-minus')}</button>` +
 `<button type="button" data-z="0" aria-label="Volver a la zona más densa">${ico('i-target')}</button></div>`;
 host.replaceChildren(el);
@@ -103,7 +106,11 @@ el.addEventListener('pointermove', e => {
 const p0 = pts.get(e.pointerId); if (!p0) return;
 const dx = e.clientX - p0[0], dy = e.clientY - p0[1];
 pts.set(e.pointerId, [e.clientX, e.clientY]);
-if (pts.size === 1) { moved += Math.abs(dx) + Math.abs(dy); this.pan(dx, dy); return; }
+if (pts.size === 1) {
+moved += Math.abs(dx) + Math.abs(dy);
+if (e.pointerType === 'touch') { if (moved > 12) this.hint(); return; }
+this.pan(dx, dy); return;
+}
 const [a, b] = pts.values(), r = el.getBoundingClientRect();
 const d = Math.hypot(a[0] - b[0], a[1] - b[1]), mx = (a[0] + b[0]) / 2 - r.left, my = (a[1] + b[1]) / 2 - r.top;
 if (last) { this.zoomAt(d / last.d, mx, my); this.pan(mx - last.mx, my - last.my); }
@@ -118,7 +125,9 @@ const f = moved < 6 && downT?.closest?.('.fl-b');
 if (f) this.onFlag?.(f.closest('.fl'));
 downT = null;
 };
-el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+el.addEventListener('pointerup', up);
+el.addEventListener('pointercancel', e => { if (e.pointerType === 'touch' && pts.size === 1) this.hint(); up(e); });
+el.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 el.addEventListener('wheel', e => {
 if (!e.ctrlKey && document.activeElement !== el) return;
 e.preventDefault();
@@ -141,6 +150,10 @@ else if (b.dataset.z === '0') this.goHome();
 else if (b.dataset.z) this.zoomAt(+b.dataset.z, undefined, undefined, true);
 });
 }
+hint() {
+const h = this.el.querySelector('.mesa-hint');
+h.classList.add('on'); clearTimeout(this.ht); this.ht = setTimeout(() => h.classList.remove('on'), 1400);
+}
 destroy() { this.ro.disconnect(); this.el.remove(); }
 }
 function merge(flags, d = .02) {
@@ -154,10 +167,10 @@ return out.sort((a, b) => b.count - a.count);
 /* ---------- mapa de una pet (ficha) ---------- */
 export function petMap(host, pet, { mode, saveData }) {
 let dead = false, m = null;
-fetch(`assets/spawns/${pet.id}.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(data => {
+Promise.all([fetch(`assets/spawns/${pet.id}.json`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }), cssP]).then(([data]) => {
 if (dead) return;
 let reg = 0, mob = -1;
-host.innerHTML = `<div class="mapa-ui"><div class="mapa-tabs"></div><div class="mapa-chips" role="group" aria-label="Mob"></div><p class="mapa-grieta" hidden>${ico('c-altgard')}Grieta · nv 45+ · abre cada 3 h · 60 min</p><div class="mapa-host"></div><p class="mesa-sum"></p></div>`;
+host.innerHTML = `<div class="mapa-ui"><div class="mapa-tabs"></div><div class="mapa-chips" role="group" aria-label="Mob"></div><p class="mapa-grieta" hidden>${ico('c-altgard')}Grieta · nv 45+ · abre cada 3 h · portal ~10 min · 60 min adentro</p><div class="mapa-host"></div><p class="mesa-sum"></p></div>`;
 const tabs = host.querySelector('.mapa-tabs'), chips = host.querySelector('.mapa-chips'), mh = host.querySelector('.mapa-host'), sum = host.querySelector('.mesa-sum');
 const region = () => {
 const R = data.regions[reg];
@@ -245,7 +258,7 @@ m.look(f.u, f.v, Math.max(m.z, 2.2));
 if (matchMedia('(max-width:1080px)').matches && mapEl.getBoundingClientRect().top < 0) mapEl.scrollIntoView({ block: 'start', behavior: RM ? 'auto' : 'smooth' });
 } else m.goHome();
 }
-fetch('assets/spawns/grieta.json').then(r => r.json()).then(d => {
+Promise.all([fetch('assets/spawns/grieta.json').then(r => r.json()), cssP]).then(([d]) => {
 data = d;
 m = new Mesa(mapEl, { regionId: d.regionId, label: 'Mapa de Altgard con las pets de la Grieta que te faltan', mode, saveData });
 m.home = [.56, .52, 1.25];

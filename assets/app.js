@@ -15,7 +15,7 @@ const fecha = iso => iso.split('-').reverse().join('/');
 const norm = s => s.replace(/<[^>]+>/g, '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 const ls = {
 get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
 };
 const idle = f => (window.requestIdleCallback || setTimeout)(f, { timeout: 2500 });
 const album = $('#album'), dlg = $('#ficha'), fBody = $('#fBody');
@@ -25,10 +25,33 @@ const isTyping = t => t.closest?.('input,textarea,select,[contenteditable]');
 /* ---------- colección (mismo formato de v1 en pets-owned) ---------- */
 const owned = new Set((ls.get('pets-owned', []) || []).map(String));
 const level = ls.get('pets-level', {}) || {};
-const save = () => { ls.set('pets-owned', [...owned]); ls.set('pets-level', level); };
+function save() {
+if (!(ls.set('pets-owned', [...owned]) & ls.set('pets-level', level))) { $('#warn').hidden = false; return; }
+ls.set('pets-dirty', Date.now()); dirtyUI(); nudge();
+}
 const isMax = id => owned.has(id) && level[id] === 3;
-for (const p of PETS) p.hay = norm([p.name, p.en, p.genus, ...p.routes.flatMap(r => [r.mob, r.mobEn, r.place, r.placeEn, r.note, r.shop]),
+const CAT = Object.fromEntries(D.cats.map(c => [c.key, c.label]));
+for (const p of PETS) {
+p.hay = norm([p.name, p.en, p.genus, CAT[p.cat], $('.ch', CARD.get(p.id)).textContent, ...p.routes.flatMap(r => [r.mob, r.mobEn, r.place, r.placeEn, r.note, r.shop, r.kind === 'fboss' && 'boss de campo']),
 ...p.chests.flatMap(c => [c.name, c.en])].filter(Boolean).join(' '));
+p.words = [...new Set(p.hay.split(/[^a-z0-9]+/).filter(w => w.length > 2))];
+p.nm = norm(p.name + ' ' + p.en);
+}
+const STOP = new Set('nv nivel niv lvl level de del la el en los las y con'.split(' '));
+function osa(a, b) {
+const d = [];
+for (let i = 0; i <= a.length; i++) {
+d[i] = [i];
+for (let j = 1; j <= b.length; j++) d[i][j] = i ? Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] !== b[j - 1]),
+i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1] ? d[i - 2][j - 2] + 1 : 99) : j;
+}
+return d[a.length][b.length];
+}
+let TOK = [], fuzzy = false;
+const setQ = raw => { F.qRaw = raw; F.q = norm(raw.trim()); TOK = F.q.split(/\s+/).filter(t => t && !STOP.has(t)); fuzzy = false; };
+const hit = (p, t) => /^\d+$/.test(t) ? p.routes.some(r => r.lvl && +t >= r.lvl[0] && +t <= r.lvl[1]) : p.hay.includes(t) ||
+(fuzzy && t.length > 3 && p.words.some(w => osa(t, w) < 2 || osa(t, w.slice(0, t.length)) < 2));
+const rank = p => p.nm.startsWith(F.q) ? 0 : TOK.every(t => p.nm.includes(t)) ? 1 : 2;
 const today = (() => { const t = new Date(); return Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()); })();
 const daysTo = iso => { const [y, m, d] = iso.split('-').map(Number); return Math.round((Date.UTC(y, m - 1, d) - today) / 864e5); };
 $$('.fu .shop[data-until],.card[data-until]').forEach(li => li.classList.toggle('exp', daysTo(li.dataset.until) < 0));
@@ -37,8 +60,8 @@ const dead = p => !p.chests.length && p.routes.length === 1 && p.routes[0].kind 
 const U = new URLSearchParams(location.search);
 const F = { q: '', qRaw: U.get('q') || '', ver: U.get('ver') || '', genus: U.get('genus') || '', cat: U.get('cat') || '', group: U.get('agrupar') || '', vista: U.get('vista') || '' };
 if (!['', 'faltan', 'subir', 'completas'].includes(F.ver)) F.ver = '';
-F.q = norm(F.qRaw.trim());
 const qIn = $('#q'), selG = $('#fGenus'), selC = $('#fCat'), selGr = $('#fGroup');
+setQ(F.qRaw);
 qIn.value = F.qRaw; selG.value = F.genus; selC.value = F.cat; selGr.value = F.group;
 F.genus = selG.value; F.cat = selC.value; F.group = selGr.value;
 function match(p) {
@@ -48,21 +71,28 @@ const o = owned.has(p.id), m = isMax(p.id);
 if (F.ver === 'faltan' && o) return false;
 if (F.ver === 'subir' && (!o || m)) return false;
 if (F.ver === 'completas' && !m) return false;
-return !F.q || p.hay.includes(F.q);
+return TOK.every(t => hit(p, t));
 }
 const EMPTY = { faltan: 'Las tenés todas. Daeva completo.', subir: 'Todas las que tenés están al máximo.', completas: 'Todavía ninguna al máximo. Subí la primera.' };
 function apply() {
 let n = 0;
 for (const [id, c] of CARD) { const ok = match(BY.get(id)); c.hidden = !ok; n += ok; }
-const free = !F.q && !F.genus && !F.cat && !F.ver;
+if (!n && TOK.length && !fuzzy) { fuzzy = true; return apply(); }
+album.classList.toggle('flat', !!TOK.length);
+for (const [id, c] of CARD) c.style.order = TOK.length && !c.hidden ? rank(BY.get(id)) : '';
+const sug = $('#sug');
+sug.hidden = n || !TOK.length;
+if (!sug.hidden) sug.innerHTML = '¿Quisiste decir ' + PETS.map(p => [TOK.reduce((a, t) => a + Math.min(9, ...p.nm.split(' ').map(w => osa(t, w))), 0), p])
+.sort((a, b) => a[0] - b[0]).slice(0, 3).map(([, p]) => `<a href="#pet-${p.id}">${esc(p.name)}</a>`).join(', ') + '?';
+const free = !TOK.length && !F.genus && !F.cat && !F.ver;
 for (const s of $$('.cap', album)) s.hidden = !s.querySelector('.card:not([hidden])') && !(free && s.querySelector('.also'));
 album.dataset.ver = F.ver;
 album.dataset.view = F.vista === 'lista' ? 'lista' : 'album';
-const onlySeg = !F.q && !F.genus && !F.cat;
+const onlySeg = !TOK.length && !F.genus && !F.cat;
 $('#vacio').hidden = n > 0;
 $('#vacioT').textContent = onlySeg && EMPTY[F.ver] ? (F.ver === 'subir' && !owned.size ? 'Todavía ninguna. Marcá la primera.' : EMPTY[F.ver]) : 'Nada con esos filtros.';
 $('#limpiar').hidden = onlySeg && !!EMPTY[F.ver];
-$('#cuenta').innerHTML = (n === N ? `<b>${N}</b> pets` : `Mostrando <b>${n}</b> de ${N}`) + ` · tenés <b id="cOwn">${owned.size}</b>`;
+$('#cuenta').innerHTML = (n === N ? `<b>${N}</b> pets` : `Mostrando <b>${n}</b> de ${N}`) + (fuzzy && n ? ' (parecidas)' : '') + ` · tenés <b id="cOwn">${owned.size}</b>`;
 for (const b of $$('#ver button')) b.setAttribute('aria-pressed', b.dataset.v === F.ver);
 for (const b of $$('#vista button')) b.setAttribute('aria-pressed', b.dataset.vista === F.vista);
 selG.classList.toggle('on', !!F.genus); selC.classList.toggle('on', !!F.cat); selGr.classList.toggle('on', !!F.group);
@@ -158,9 +188,10 @@ $('#exBars').innerHTML = D.cats.map(c => {
 const ids = PETS.filter(p => p.cat === c.key), o = ids.filter(p => owned.has(p.id)).length;
 return `<div style="color:${c.color}">${ico('c-' + c.key)}<span class="bar"><i style="--w:${o / ids.length * 100}%"></i></span><span><b>${o}</b>/${ids.length}</span></div>`;
 }).join('');
-$('#exLink').value = exportLink();
+colM?.syncExport();
 const co = $('#cOwn'); if (co) co.textContent = owned.size;
-$('#hLoad').hidden = !!own || !WIN;
+$('#hLoad').hidden = !!own || !WIN; $('#hQuick').hidden = !!own; $('#hBak').hidden = !own;
+dirtyUI();
 plan?.refresh();
 }
 function refresh(id) { paint(id); counts(); if (id === presaId) presaLabel(); }
@@ -187,14 +218,26 @@ else apply();
 });
 /* ---------- barra ---------- */
 let qT;
-qIn.addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { F.qRaw = qIn.value; F.q = norm(qIn.value.trim()); apply(); }, 90); });
+const first = () => $$('.card:not([hidden])', album).sort((a, b) => (a.style.order || 0) - (b.style.order || 0))[0];
+function reveal() {
+const r = first()?.getBoundingClientRect(), bh = $('#barra').offsetHeight;
+if (r && (r.top > innerHeight - 80 || r.top < bh)) album.scrollIntoView({ block: 'start' });
+}
+qIn.addEventListener('input', () => { clearTimeout(qT); qT = setTimeout(() => { setQ(qIn.value); apply(); if (TOK.length) reveal(); }, 120); });
+qIn.addEventListener('keydown', e => {
+if (e.key === 'Enter') {
+clearTimeout(qT); setQ(qIn.value); apply(); qIn.blur(); reveal();
+const v = $$('.card:not([hidden])', album);
+if (v.length === 1 && TOK.length) openPet(v[0].dataset.id);
+} else if (e.key === 'ArrowDown' && first()) { e.preventDefault(); $('h3 a', first()).focus(); }
+});
 selG.addEventListener('change', () => { F.genus = selG.value; apply(); });
 selC.addEventListener('change', () => { F.cat = selC.value; apply(); });
 selGr.addEventListener('change', () => { F.group = selGr.value; regroup(); apply(); });
 $('#ver').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { F.ver = b.dataset.v; apply(); } });
 $('#vista').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { F.vista = b.dataset.vista; apply(); } });
 $('#limpiar').addEventListener('click', () => {
-Object.assign(F, { q: '', qRaw: '', ver: '', genus: '', cat: '' }); qIn.value = ''; selG.value = ''; selC.value = ''; apply();
+Object.assign(F, { ver: '', genus: '', cat: '' }); setQ(''); qIn.value = ''; selG.value = ''; selC.value = ''; apply();
 });
 document.addEventListener('keydown', e => {
 if (e.key === '/' && !isTyping(e.target) && !dlg.open && !$('#dlgImp').open) { e.preventDefault(); qIn.focus(); qIn.select(); }
@@ -222,12 +265,20 @@ album.addEventListener('pointerleave', off);
 }
 /* ---------- toast + portapapeles ---------- */
 let tT;
-function toast(html, ms = 3600) {
-const t = $('#toast'); t.innerHTML = html; t.classList.add('on');
-clearTimeout(tT); tT = setTimeout(() => t.classList.remove('on'), ms);
+const tEl = $('#toast');
+function toast(html, ms = 3600, fn, label = 'Deshacer') {
+tEl.innerHTML = html;
+if (fn) tEl.append(' ', Object.assign(document.createElement('button'), { type: 'button', className: 'linkbtn', textContent: label, onclick: () => { hideToast(); fn(); } }));
+tEl.classList.toggle('act', !!fn);
+const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+if (tEl.parentNode !== host) host.append(tEl);
+if (tEl.showPopover) { if (tEl.matches(':popover-open')) tEl.hidePopover(); tEl.showPopover(); }
+tEl.classList.add('on');
+clearTimeout(tT); tT = setTimeout(hideToast, ms);
 }
-const hideToast = () => { clearTimeout(tT); $('#toast').classList.remove('on'); };
-const copy = (text, msg) => navigator.clipboard?.writeText(text).then(() => msg && toast(msg), () => {});
+function hideToast() { clearTimeout(tT); tEl.classList.remove('on'); }
+const copy = (text, msg, field) => (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+.then(() => (msg && toast(msg), true), () => { field?.select?.(); toast(`No pude copiar. Copialo a mano: <code>${esc(text)}</code>`, 12000); return false; });
 /* ---------- hero: próxima presa + plumaje ---------- */
 const presa = $('#presa'), presaVit = $('#presaVit'), presaImg = $('#presaImg');
 let presaId = null;
@@ -364,7 +415,7 @@ t.finished.finally(() => { dlg.style.transition = ''; const v = $('#fVit'); if (
 } else go();
 const h = '#pet-' + id;
 if (location.hash !== h) {
-if (push && !was) { history.pushState({ ficha: 1 }, '', h); dlg.dataset.pushed = 1; }
+if (push && !was) history.pushState({ ficha: 1 }, '', h);
 else history.replaceState(history.state, '', h);
 }
 }
@@ -374,7 +425,7 @@ cur = null; mapa?.destroy(); mapa = null;
 dlg.style.transform = '';
 if (A) heroAlma();
 if (location.hash.startsWith('#pet-')) {
-if (dlg.dataset.pushed) { delete dlg.dataset.pushed; history.back(); }
+if (history.state?.ficha) history.back();
 else history.replaceState(null, '', location.pathname + location.search);
 }
 });
@@ -389,7 +440,7 @@ else if (nav) step(+nav.dataset.nav);
 else if (e.target.closest('[data-genus]')) {
 e.preventDefault();
 const h = e.target.closest('a').hash, t = document.getElementById(h.slice(1));
-delete dlg.dataset.pushed; history.replaceState(null, '', h);
+history.replaceState(null, '', h);
 dlg.close();
 setTimeout(() => t?.scrollIntoView({ block: 'start' }), 60);
 }
@@ -416,7 +467,7 @@ if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !isTyping(e.target) && 
 window.addEventListener('popstate', () => {
 const m = location.hash.match(/^#pet-(\d+)$/);
 if (m && BY.has(m[1])) openPet(m[1], { push: false, vt: false });
-else if (dlg.open) { delete dlg.dataset.pushed; dlg.close(); }
+else if (dlg.open) dlg.close();
 });
 document.addEventListener('click', e => {
 const a = e.target.closest('a[href^="#pet-"]');
@@ -441,141 +492,63 @@ grip.addEventListener('pointermove', e => { if (y0 == null) return; dy = Math.ma
 const end = () => { if (y0 == null) return; y0 = null; dlg.style.transition = ''; if (dy > 110) dlg.close(); else dlg.style.transform = ''; };
 grip.addEventListener('pointerup', end); grip.addEventListener('pointercancel', end);
 }
-/* ---------- export / import por link: #c=v2.<base64url>, 2 bits por id desde 1000 ---------- */
-const b64u = u8 => btoa(String.fromCharCode(...u8)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-function exportLink() {
-const b = new Uint8Array(128); let last = -1;
-for (const id of owned) {
-const i = +id - 1000; if (!(i >= 0 && i < 512)) continue;
-b[i >> 2] |= (level[id] || 1) << ((i & 3) * 2); last = Math.max(last, i >> 2);
-}
-return D.meta.baseUrl + '#c=v2.' + b64u(b.subarray(0, last + 1));
-}
-function parseLink(s) {
-const m = /^v2\.([A-Za-z0-9_-]*)$/.exec(s); if (!m) return null;
-let bin; try { bin = atob(m[1].replace(/-/g, '+').replace(/_/g, '/')); } catch { return null; }
-const out = new Map();
-for (let i = 0; i < bin.length; i++) for (let k = 0; k < 4; k++) {
-const v = (bin.charCodeAt(i) >> (k * 2)) & 3; if (v) out.set(String(1000 + i * 4 + k), v);
-}
-return out;
-}
-function applyImport(map, mode) {
-if (mode === 'replace') { owned.clear(); for (const k in level) delete level[k]; }
-for (const [id, lv] of map) if (BY.has(id)) { owned.add(id); level[id] = mode === 'replace' ? lv : Math.max(level[id] || 0, lv); }
-save(); refreshAll(); apply();
-toast(`Listo: tenés <b>${PETS.filter(p => owned.has(p.id)).length}</b> de ${N} · <b>${PETS.filter(p => isMax(p.id)).length}</b> al máximo`, 5000);
-}
-const lvSummary = m => { const c = [0, 0, 0, 0]; for (const v of m.values()) c[v]++; return `${c[1]} en nivel 1, ${c[2]} en nivel 2, ${c[3]} al máximo`; };
-const ours = m => new Map([...m].filter(([id]) => BY.has(id)));
-const dI = $('#dlgImp');
-function modal(title, body, actions) {
-$('#impT').textContent = title; $('#impBody').innerHTML = body;
-$('#impAct').innerHTML = actions.map(([v, l, c], i) => `<button type="submit" class="btn ${c || ''}" value="${v}"${i === 0 ? ' autofocus' : ''}>${l}</button>`).join('');
-dI.returnValue = ''; dI.showModal();
-return new Promise(res => dI.addEventListener('close', () => res(dI.returnValue), { once: true }));
-}
-async function importFromHash() {
-const m = /^#c=(.+)$/.exec(location.hash); if (!m) return;
-history.replaceState(null, '', location.pathname + location.search);
-const map = parseLink(m[1]);
-if (!map) return toast('Ese link de colección no es válido.');
-const mine = ours(map);
-const r = await modal(`Importar ${mine.size} pets`, `<p>Este link trae <b>${mine.size}</b> pets de esta lista: ${lvSummary(mine)}.</p><p>En este navegador tenés <b>${owned.size}</b>.</p>`,
-[['add', 'Sumar a la mía', 'gold'], ['replace', 'Reemplazar'], ['', 'Cancelar', 'ghost']]);
-if (r) applyImport(mine, r);
-}
-$('#exCopy').addEventListener('click', () => copy($('#exLink').value, 'Link de tu colección copiado. Abrilo en el otro dispositivo.'));
-$('#exLink').addEventListener('focus', e => e.target.select());
-$('#colReset').addEventListener('click', () => {
-if (!owned.size || !confirm(`¿Borrar tus ${owned.size} pets marcadas en este navegador?`)) return;
-owned.clear(); for (const k in level) delete level[k]; save(); refreshAll(); apply();
+/* ---------- colección: el módulo pesado (coleccion.js) se carga al primer gesto que lo necesita ---------- */
+const QL_DIR = '%APPDATA%\\Questlog\\aion-2';
+const MOBILE = /Android|iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IOS = MOBILE && !/Android/.test(navigator.userAgent) && !navigator.standalone;
+const WIN = !MOBILE && /win/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
+let colM = null, colP = null, qlAuto = false;
+const col = () => colP ||= import('./coleccion.js').then(m => {
+m.init({ D, PETS, BY, N, owned, level, save, paint, counts, refreshAll, apply, toast, copy, esc, ico, norm, ls, isMax, imgUrl, RM, WIN, QL_DIR, dirtyUI });
+return colM = m;
 });
-/* ---------- Questlog: %APPDATA%\Questlog\aion-2\characters.json, se lee en el navegador ---------- */
-const QL_DIR = '%APPDATA%\\Questlog\\aion-2', QL_PATH = QL_DIR + '\\characters.json';
-const WIN = /win/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
-let qlAuto = false;
-function parseQL(text) {
-let j; try { j = JSON.parse(text); } catch { return { err: 'wrong' }; }
-if (!j || typeof j.characters !== 'object' || Array.isArray(j.characters) || !j.characters) return { err: 'wrong' };
-const gs = new Map();
-for (const [key, ch] of Object.entries(j.characters)) {
-const list = new Map();
-for (const x of Array.isArray(ch?.pets) ? ch.pets : []) {
-const id = String(x?.pet ?? '');
-if (/^\d+$/.test(id)) list.set(id, Math.min(3, Math.max(1, Math.round(+x.level) || 1)));
-}
-if (!list.size) continue;
-const sig = [...list].sort((a, b) => a[0] - b[0]).join(';');
-let g = gs.get(sig); if (!g) gs.set(sig, g = { keys: [], names: [], list });
-g.keys.push(key); g.names.push(String(j.roster?.[key]?.name || ch.name || key.replace(/^\d+:/, '')));
-}
-return gs.size ? { groups: [...gs.values()].sort((a, b) => b.list.size - a.list.size) } : { err: 'empty' };
-}
-const QL_ERR = {
-wrong: `Ese no parece ser el characters.json de Questlog. La ruta es <code>${QL_PATH}</code>`,
-empty: 'Ese archivo no tiene pets todavía. Abrí la app de Questlog mientras jugás (ahí se guarda tu colección) y volvé a probar.',
-read: 'No pude leer el archivo. Probá de nuevo.',
-};
-const qlErr = k => modal('No es ese archivo', `<p class="imp-err">${QL_ERR[k]}</p>`, [['', 'Entendido', 'gold']]);
-async function qlFile(file, silent) {
-let text; try { text = await file.text(); } catch { return qlErr('read'); }
-const r = parseQL(text);
-if (r.err) return qlErr(r.err);
-const pref = ls.get('pets-questlog-char', null);
-const auto = silent && pref && r.groups.find(g => g.keys.includes(pref));
-if (auto) { applyImport(ours(auto.list), 'replace'); synced(); return; }
-let sel = Math.max(0, r.groups.findIndex(g => g.keys.includes(pref)));
-const sum = g => { const m = ours(g.list); return `Importar <b>${g.list.size} pets</b> (<b>${m.size}</b> de esta lista): ${lvSummary(m)}.`; };
-const body = (r.groups.length > 1 ? `<p>Hay ${r.groups.length} cuentas en el archivo. Elegí la tuya:</p><div class="imp-groups">${r.groups.map((g, i) =>
-`<label><input type="radio" name="grp" value="${i}"${i === sel ? ' checked' : ''}><span><b>${esc(g.names.join(', '))}</b><small>${g.list.size} pets · ${ours(g.list).size} de esta lista</small></span></label>`).join('')}</div>` : `<p>Cuenta: <b>${esc(r.groups[0].names.join(', '))}</b></p>`) +
-`<p id="impSum">${sum(r.groups[sel])}</p><p class="q">Reemplazar pisa lo que tenés marcado en este navegador; Sumar se queda con el nivel más alto.</p>`;
-const done = modal('Importar desde Questlog', body, [['replace', 'Reemplazar', 'gold'], ['add', 'Sumar a la mía'], ['', 'Cancelar', 'ghost']]);
-$('#impBody').addEventListener('change', e => { if (e.target.name === 'grp') { sel = +e.target.value; $('#impSum').innerHTML = sum(r.groups[sel]); } });
-const mode = await done;
-if (!mode) return;
-const g = r.groups[sel];
-ls.set('pets-questlog-char', g.keys[0]);
-applyImport(ours(g.list), mode);
-synced();
-}
-function synced() { ls.set('pets-questlog-sync', Date.now()); qlUI(); counts(); }
-function qlPick(auto) {
-qlAuto = auto === true && !!ls.get('pets-questlog-char', null);
-copy(QL_DIR);
-toast(WIN ? 'Pegá (Ctrl+V) en la barra de arriba del cuadro, Enter, y doble clic en <b>characters.json</b>' : `Carpeta copiada: <b>${QL_DIR}</b>`, 15000);
-$('#qlFile').click();
-}
-function qlUI() {
-const t = ls.get('pets-questlog-sync', 0);
-const ago = t ? new Intl.RelativeTimeFormat('es-AR', { numeric: 'auto', style: 'short' }) : null;
-const rel = () => { const s = (t - Date.now()) / 1000, a = Math.abs(s); return a < 60 ? 'recién' : a < 3600 ? ago.format(Math.round(s / 60), 'minute') : a < 86400 ? ago.format(Math.round(s / 3600), 'hour') : ago.format(Math.round(s / 86400), 'day'); };
-$('#qlSync').hidden = $('#hSync').hidden = !t;
-$('#qlMeta').hidden = !t;
-if (t) $('#qlWhen').textContent = 'última importación: ' + rel();
-$('#hSync span').textContent = t ? 'Actualizar · ' + rel() : 'Actualizar desde Questlog';
-$('#qlLoad').classList.toggle('gold', WIN && !t);
-}
-$('#qlLoad').addEventListener('click', qlPick);
-$('#qlSync').addEventListener('click', () => qlPick(true));
-$('#hSync').addEventListener('click', () => qlPick(true));
-$('#qlCopy').addEventListener('click', () => copy(QL_DIR, 'Carpeta copiada. Pegala en la barra de arriba del cuadro de Cargar y elegí <b>characters.json</b>.'));
-$('#qlFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; hideToast(); if (f) qlFile(f, qlAuto); });
+function goBackup() { $('#bak').scrollIntoView({ block: 'center' }); $('#exCopy').focus({ preventScroll: true }); }
+document.addEventListener('click', e => {
+const b = e.target.closest('[data-col]'); if (!b) return;
+const k = b.dataset.col;
+if (k === 'pick' || k === 'repick') {
+qlAuto = k === 'repick' && !!ls.get('pets-questlog-char', null);
+if (WIN) { copy(QL_DIR); toast('Pegá con Ctrl+V (en Nombre o en la barra de arriba) y Enter; después doble clic en <b>characters.json</b>.', 20000); }
+$('#qlFile').click(); col();
+} else if (k === 'backup') goBackup();
+else col().then(m => m.act(k));
+});
 {
-const z = $('#qlDrop'), card = $('#qlCard');
-card.addEventListener('dragover', e => { e.preventDefault(); z.classList.add('over'); });
-card.addEventListener('dragleave', e => { if (!card.contains(e.relatedTarget)) z.classList.remove('over'); });
-card.addEventListener('drop', e => {
-e.preventDefault(); z.classList.remove('over');
-const f = e.dataTransfer.files[0];
-if (f) qlFile(f);
-});
+const fi = $('#qlFile');
+fi.addEventListener('change', () => { const f = fi.files[0]; fi.value = ''; hideToast(); if (f) col().then(m => m.file(f, qlAuto)); });
+fi.addEventListener('cancel', hideToast);
 }
+{
+const ov = $('#dropOv'), isF = e => e.dataTransfer?.types?.includes('Files');
+let n = 0;
+const off = () => { n = 0; ov.hidden = true; };
+addEventListener('dragenter', e => { if (!isF(e)) return; e.preventDefault(); if (!n++) { ov.hidden = false; col(); } });
+addEventListener('dragover', e => { if (isF(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+addEventListener('dragleave', e => { if (isF(e) && --n <= 0) off(); });
+addEventListener('drop', e => { if (!isF(e)) return; e.preventDefault(); off(); const f = e.dataTransfer.files[0]; if (f) col().then(m => m.file(f)); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && !ov.hidden) off(); });
+}
+new IntersectionObserver((es, o) => { if (es.some(e => e.isIntersecting)) { o.disconnect(); col(); } }, { rootMargin: '600px 0px' }).observe($('#coleccion'));
 if (!WIN) {
-$('#qlLead').textContent = 'La app de Questlog es para Windows; en el celu podés pasar tu colección desde la PC con el link de exportar.';
-$('#qlSteps').hidden = true; $('.ql-path').hidden = true; $('#qlDrop').hidden = true;
-$('#qlLoad').classList.remove('gold'); $('#qlLoad').lastChild.textContent = 'Tengo el archivo igual';
+$('#qlLead').textContent = MOBILE ? 'La app de Questlog es solo para Windows. Desde el celu, usá la Carga rápida o abrí tu link de respaldo.' : 'La app de Questlog es solo para Windows.';
+for (const x of ['#qlSteps', '.ql-path', '#qlDir', '#qlDrop']) $(x).hidden = true;
+$('#qlLoad').classList.remove('gold'); $('#qlLoad').lastChild.textContent = MOBILE ? 'Restaurar un respaldo (.json)' : 'Tengo el archivo igual';
 }
+function dirtyUI() {
+const d = owned.size > 0 && ls.get('pets-bak-t', 0) < ls.get('pets-dirty', 1);
+$('#hBak').classList.toggle('dirty', d); $('#bakDirty').hidden = !d;
+$('#hBak').setAttribute('aria-label', d ? 'Respaldo: hay cambios sin guardar' : 'Respaldo');
+}
+let pers = 0;
+function nudge() {
+if (!owned.size) return;
+if (!pers++) navigator.storage?.persist?.().catch(() => {});
+if (ls.get('pets-nudge', 0)) return;
+ls.set('pets-nudge', 1);
+toast(IOS ? 'En iPhone, Safari puede borrar tu colección tras 7 días sin entrar: agregá el sitio a inicio o guardá un respaldo.'
+: 'Tu colección se guarda solo en este navegador. Guardá un respaldo.', 10000, goBackup, 'Respaldo');
+}
+$('#warn').addEventListener('click', e => { if (e.target.closest('[data-x]')) $('#warn').hidden = true; });
 /* ---------- guía de genus: detalle del slot ---------- */
 $('#genus').addEventListener('click', e => {
 const b = e.target.closest('.s'); if (!b) return;
@@ -645,10 +618,14 @@ if (F.group) regroup();
 refreshAll();
 apply();
 { const ip = BY.get(presaImg.dataset.id); showPresa(ip && !dead(ip) ? ip : pickPresa(), false); }
-fxUI(); qlUI();
+fxUI();
+$('#hSync').hidden = !ls.get('pets-questlog-sync', 0);
+if (owned.size) nudge();
+new IntersectionObserver(([e]) => document.body.classList.toggle('scr', !e.isIntersecting)).observe($('.hero'));
 {
 const m = location.hash.match(/^#pet-(\d+)$/);
 if (m && BY.has(m[1])) openPet(m[1], { push: false, vt: false });
-importFromHash();
 }
-window.addEventListener('hashchange', importFromHash);
+const linkIn = () => /^#c=/.test(location.hash) && col().then(m => m.fromHash());
+linkIn();
+addEventListener('hashchange', linkIn);
