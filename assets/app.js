@@ -55,7 +55,7 @@ const rank = p => p.nm.startsWith(F.q) ? 0 : TOK.every(t => p.nm.includes(t)) ? 
 const today = (() => { const t = new Date(); return Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()); })();
 const daysTo = iso => { const [y, m, d] = iso.split('-').map(Number); return Math.round((Date.UTC(y, m - 1, d) - today) / 864e5); };
 $$('.fu .shop[data-until],.card[data-until]').forEach(li => li.classList.toggle('exp', daysTo(li.dataset.until) < 0));
-const dead = p => !p.chests.length && p.routes.length === 1 && p.routes[0].kind === 'shop' && (p.routes[0].unconfirmed || (p.routes[0].until && daysTo(p.routes[0].until) < 0));
+const dead = p => !p.chests.length && p.routes.length === 1 && p.routes[0].kind === 'shop' && (p.routes[0].unconfirmed || p.routes[0].paid || (p.routes[0].until && daysTo(p.routes[0].until) < 0));
 /* ---------- filtros ---------- */
 const U = new URLSearchParams(location.search);
 const F = { q: '', qRaw: U.get('q') || '', ver: U.get('ver') || '', genus: U.get('genus') || '', cat: U.get('cat') || '', group: U.get('agrupar') || '', vista: U.get('vista') || '' };
