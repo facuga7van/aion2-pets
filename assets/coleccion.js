@@ -118,8 +118,8 @@ const auto = silent && pref && r.groups.find(g => g.keys.includes(pref));
 if (auto) { applyImport(ours(auto.list), 'add'); synced(); return; }
 let sel = Math.max(0, r.groups.findIndex(g => g.keys.includes(pref)));
 const sum = g => { const m = ours(g.list); return `Importar <b>${g.list.size} pets</b> (<b>${m.size}</b> de esta lista): ${lvSummary(m)}.`; };
-const body = (r.groups.length > 1 ? `<p>Hay ${r.groups.length} cuentas en el archivo. Elegí la tuya:</p><div class="imp-groups">${r.groups.map((g, i) =>
-`<label><input type="radio" name="grp" value="${i}"${i === sel ? ' checked' : ''}><span><b>${C.esc(g.names.join(', '))}</b><small>${g.list.size} pets · ${ours(g.list).size} de esta lista</small></span></label>`).join('')}</div>` : `<p>Cuenta: <b>${C.esc(r.groups[0].names.join(', '))}</b></p>`) +
+const body = (r.groups.length > 1 ? `<p>Hay ${r.groups.length} colecciones en el archivo (una por server o cuenta). Elegí la tuya:</p><div class="imp-groups">${r.groups.map((g, i) =>
+`<label><input type="radio" name="grp" value="${i}"${i === sel ? ' checked' : ''}><span><b>${C.esc(g.names.join(', '))}</b><small>${g.list.size} pets · ${ours(g.list).size} de esta lista</small></span></label>`).join('')}</div>` : `<p>Colección de: <b>${C.esc(r.groups[0].names.join(', '))}</b></p>`) +
 `<p id="impSum">${sum(r.groups[sel])}</p>${NOTE}`;
 const done = modal('Importar desde Questlog', body, MODES);
 await css();
