@@ -90,6 +90,7 @@ this.plane.append(frag);
 bind() {
 const el = this.el, pts = new Map();
 let last = null, moved = 0, downT = null;
+el.addEventListener('dragstart', e => e.preventDefault());
 el.addEventListener('pointerdown', e => {
 if (e.target.closest('button') || (e.pointerType === 'mouse' && e.button)) return;
 el.focus({ preventScroll: true });
