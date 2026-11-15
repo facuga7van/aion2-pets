@@ -492,7 +492,7 @@ if (!owned.size || !confirm(`¿Borrar tus ${owned.size} pets marcadas en este na
 owned.clear(); for (const k in level) delete level[k]; save(); refreshAll(); apply();
 });
 /* ---------- Questlog: %APPDATA%\Questlog\aion-2\characters.json, se lee en el navegador ---------- */
-const QL_PATH = '%APPDATA%\\Questlog\\aion-2\\characters.json';
+const QL_DIR = '%APPDATA%\\Questlog\\aion-2', QL_PATH = QL_DIR + '\\characters.json';
 const WIN = /win/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
 let qlAuto = false;
 function parseQL(text) {
@@ -542,8 +542,8 @@ synced();
 function synced() { ls.set('pets-questlog-sync', Date.now()); qlUI(); counts(); }
 function qlPick(auto) {
 qlAuto = auto === true && !!ls.get('pets-questlog-char', null);
-copy(QL_PATH);
-toast(WIN ? 'Pegá (Ctrl+V) en <b>Nombre</b> del cuadro que se abre y Enter: Windows entiende <b>%APPDATA%</b>' : `Ruta copiada: <b>${QL_PATH}</b>`, 15000);
+copy(QL_DIR);
+toast(WIN ? 'Pegá (Ctrl+V) en la barra de arriba del cuadro, Enter, y doble clic en <b>characters.json</b>' : `Carpeta copiada: <b>${QL_DIR}</b>`, 15000);
 $('#qlFile').click();
 }
 function qlUI() {
@@ -559,7 +559,7 @@ $('#qlLoad').classList.toggle('gold', WIN && !t);
 $('#qlLoad').addEventListener('click', qlPick);
 $('#qlSync').addEventListener('click', () => qlPick(true));
 $('#hSync').addEventListener('click', () => qlPick(true));
-$('#qlCopy').addEventListener('click', () => copy(QL_PATH, 'Ruta copiada. Pegala en <b>Nombre</b> del cuadro de Cargar, no en el explorador (ahí Windows abre el archivo).'));
+$('#qlCopy').addEventListener('click', () => copy(QL_DIR, 'Carpeta copiada. Pegala en la barra de arriba del cuadro de Cargar y elegí <b>characters.json</b>.'));
 $('#qlFile').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; hideToast(); if (f) qlFile(f, qlAuto); });
 {
 const z = $('#qlDrop'), card = $('#qlCard');
