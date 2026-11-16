@@ -55,7 +55,7 @@ const rank = p => p.nm.startsWith(F.q) ? 0 : TOK.every(t => p.nm.includes(t)) ? 
 const today = (() => { const t = new Date(); return Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()); })();
 const daysTo = iso => { const [y, m, d] = iso.split('-').map(Number); return Math.round((Date.UTC(y, m - 1, d) - today) / 864e5); };
 $$('.fu .shop[data-until],.card[data-until]').forEach(li => li.classList.toggle('exp', daysTo(li.dataset.until) < 0));
-const dead = p => !p.chests.length && p.routes.length === 1 && p.routes[0].kind === 'shop' && (p.routes[0].unconfirmed || p.routes[0].paid || (p.routes[0].until && daysTo(p.routes[0].until) < 0));
+const dead = p => !p.routes.some(r => r.kind !== 'shop');
 /* ---------- filtros ---------- */
 const U = new URLSearchParams(location.search);
 const F = { q: '', qRaw: U.get('q') || '', ver: U.get('ver') || '', genus: U.get('genus') || '', cat: U.get('cat') || '', group: U.get('agrupar') || '', vista: U.get('vista') || '' };
@@ -282,10 +282,16 @@ const copy = (text, msg, field) => (navigator.clipboard ? navigator.clipboard.wr
 /* ---------- hero: próxima presa + plumaje ---------- */
 const presa = $('#presa'), presaVit = $('#presaVit'), presaImg = $('#presaImg');
 let presaId = null;
+let bag = [];
+const meta = p => !dead(p) && (!owned.has(p.id) || !isMax(p.id));
 function pickPresa() {
-const not = p => p.id !== presaId && !dead(p);
-for (const pool of [PETS.filter(p => !owned.has(p.id) && not(p)), PETS.filter(p => owned.has(p.id) && !isMax(p.id) && not(p)), PETS.filter(not)])
-if (pool.length) return pool[Math.random() * pool.length | 0];
+for (let i = 0; i < 2; i++) {
+while (bag.length) { const p = bag.pop(); if (p.id !== presaId && meta(p)) return p; }
+bag = PETS.filter(meta);
+for (let j = bag.length - 1; j > 0; j--) { const k = Math.random() * (j + 1) | 0; [bag[j], bag[k]] = [bag[k], bag[j]]; }
+}
+const all = PETS.filter(p => !dead(p) && p.id !== presaId);
+return all[Math.random() * all.length | 0] || BY.get(presaId);
 }
 function presaLabel() {
 if (!presaId) return;
